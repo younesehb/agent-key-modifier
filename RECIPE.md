@@ -2,7 +2,7 @@
 
 herdr TUI's `focus_agent = "alt+1..9"` for the Herdr app: `alt+1`…`alt+9` jump to that row of the Agents list, and the first nine rows show their number in a badge while you hold Option/Alt (or for 3 seconds after `alt+0`). Everything else is Herdr's own `main` layout and Agents list, unchanged.
 
-![agent-key-modifier](preview.png)
+![agent-key-modifier](preview.gif)
 
 ## What you see
 

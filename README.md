@@ -2,7 +2,7 @@
 
 `alt+1..9` jumps to agents in the [Herdr](https://github.com/herdrdev/herdr-app) app, like herdr TUI's `focus_agent`, and the Agents list shows each row's number while you hold Option/Alt.
 
-![agent-key-modifier](preview.png)
+![agent-key-modifier](preview.gif)
 
 ## Install
 
