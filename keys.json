@@ -1,0 +1,14 @@
+{
+  "global": {
+    "alt-0": "agent-key-modifier.show",
+    "alt-1": "agent-key-modifier.n1",
+    "alt-2": "agent-key-modifier.n2",
+    "alt-3": "agent-key-modifier.n3",
+    "alt-4": "agent-key-modifier.n4",
+    "alt-5": "agent-key-modifier.n5",
+    "alt-6": "agent-key-modifier.n6",
+    "alt-7": "agent-key-modifier.n7",
+    "alt-8": "agent-key-modifier.n8",
+    "alt-9": "agent-key-modifier.n9"
+  }
+}
