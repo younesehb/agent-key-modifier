@@ -7,6 +7,8 @@ Two drop-in replacements for the Agents list in the [Herdr](https://github.com/h
 | [agent-key-modifier](agent-key-modifier) | `alt+1..9` jumps to agents, like herdr TUI's `focus_agent`, and rows show their number while you hold Option/Alt |
 | [agents-grouped](agents-grouped) | everything above, plus a name, group, icon and group color per agent (right-click), drag agents between groups, and a "By group" sort |
 
+![agents-grouped](agents-grouped/preview.png)
+
 ![agent-key-modifier](agent-key-modifier/preview.gif)
 
 ## Install

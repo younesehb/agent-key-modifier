@@ -2,6 +2,8 @@
 
 Herdr's Agents list with your own groups: give any agent a name, a group, an icon and a group color from a right-click dialog, drag agents between groups, and sort the list "By group". It also carries [agent-key-modifier](../agent-key-modifier)'s keys: `alt+1`…`alt+9` jump to that row, `alt+0` (or holding Option/Alt with a helper) shows the row numbers.
 
+![agents-grouped](preview.png)
+
 ## What you see
 
 Herdr's `main` layout: sidebar on the left (brand, Spaces, Agents, footer), tabs and terminals on the right. The Agents block shows the `agents-grouped` mod instead of the shipped `agents` mod.
