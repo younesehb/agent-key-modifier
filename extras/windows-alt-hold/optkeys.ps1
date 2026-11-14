@@ -1,8 +1,10 @@
-# Shows the agent-key-modifier numbers while Alt is held (Herdr in front), hides them on release.
+# Shows the agent numbers of agent-key-modifier or agents-grouped while Alt is held (Herdr in front), hides them on release.
 # Herdr mods only see modifier keys on the keyboard focus path, which a terminal owns
 # (https://github.com/herdrdev/herdr-app/issues/890), so this polls the key state
-# and tells the mod through `herdr-app do agent-key-modifier.hold|release`.
+# and tells the mod through `herdr-app do <mod>.hold|release`.
+# Usage: optkeys.ps1 [-Mod agents-grouped]   (default agent-key-modifier)
 # ponytail: polls at 30 Hz; a low-level keyboard hook would be instant but needs a message loop.
+param([string]$Mod = "agent-key-modifier")
 Add-Type @"
 using System; using System.Runtime.InteropServices;
 public static class AkmKeys {
@@ -26,7 +28,7 @@ while ($true) {
   if ($want -ne $shown) {
     $shown = $want
     $cmd = if ($shown) { "hold" } else { "release" }
-    Start-Process -FilePath $cli -ArgumentList "do", "agent-key-modifier.$cmd" -WindowStyle Hidden
+    Start-Process -FilePath $cli -ArgumentList "do", "$Mod.$cmd" -WindowStyle Hidden
   }
   Start-Sleep -Milliseconds 33
 }

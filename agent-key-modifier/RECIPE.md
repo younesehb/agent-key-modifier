@@ -14,7 +14,7 @@ While the numbers show, each of the first nine top-level agent rows starts with 
 
 - `alt+1`…`alt+9`: focuses the agent on that row, counting top to bottom as drawn: pinned first, then the list's sort (Priority: Needs you, Done, Working, Idle; or grouped by space). Nested sub-agents without their own row don't count. No row N: nothing happens.
 - `alt+0`: badges show for 3 seconds; pressing again restarts the 3 seconds.
-- Holding Option (macOS) / Alt (Windows) with Herdr in front: badges show until released. Needs the optional helper in `extras/`.
+- Holding Option (macOS) / Alt (Windows) with Herdr in front: badges show until released. Needs the optional helper in `../extras/`.
 - Agent statuses, folding, pinning, sorting, clicks and hovers: as the shipped Agents list.
 
 ## Built from
@@ -25,8 +25,8 @@ While the numbers show, each of the first nine top-level agent rows starts with 
   - in `init`, a `cx.spawn` loop on `nextCommand()`: `n<N>` → `run("agent.focus", { terminal: this.order[N - 1] })`; `show` → `this.flash = true` and `cx.timer.after(3000, …)` clears it; `hold` / `release` set `this.flash` and cancel the timer;
   - in the full-width row, before the program icon: `.when(this.flash && index < 9, el => el.child(badge))`.
 - `keys.json`: `"alt-0": "agent-key-modifier.show"`, `"alt-1": "agent-key-modifier.n1"` … `"alt-9": "agent-key-modifier.n9"` in `global`.
-- `extras/macos-option-hold/`: a Swift helper polling `CGEventSource.flagsState` at 30 Hz; Option down (no Cmd/Ctrl) with frontmost bundle `dev.herdr.app` runs `Herdr do agent-key-modifier.hold`, release runs `…release`. `install.sh` builds it and loads a launchd agent `dev.herdr.agent-key-modifier`.
-- `extras/windows-alt-hold/`: the same in PowerShell with `GetAsyncKeyState` (Alt down, no Ctrl/Win) and foreground process `herdr-app`, calling `%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe do …`; `install.ps1` adds a Startup-folder shortcut.
+- `../extras/macos-option-hold/`: a Swift helper polling `CGEventSource.flagsState` at 30 Hz; Option down (no Cmd/Ctrl) with frontmost bundle `dev.herdr.app` runs `Herdr do agent-key-modifier.hold`, release runs `…release` (the mod name is its second argument, for [agents-grouped](../agents-grouped)). `install.sh` builds it and loads a launchd agent `dev.herdr.agent-key-modifier`.
+- `../extras/windows-alt-hold/`: the same in PowerShell with `GetAsyncKeyState` (Alt down, no Ctrl/Win) and foreground process `herdr-app`, calling `%LOCALAPPDATA%\Programs\herdr-app\herdr-app.exe do …`; `install.ps1` adds a Startup-folder shortcut; both take `-Mod`.
 
 ## Watch out
 

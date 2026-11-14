@@ -1,17 +1,19 @@
-// Shows the agent-key-modifier numbers while Option is held (Herdr frontmost), hides them on release.
+// Shows the agent numbers of agent-key-modifier or agents-grouped while Option is held (Herdr frontmost), hides them on release.
 // Herdr mods only see modifier keys on the keyboard focus path, which a terminal owns
 // (https://github.com/herdrdev/herdr-app/issues/890), so this polls the modifier state
-// and tells the mod through `herdr-app do agent-key-modifier.hold|release`.
+// and tells the mod through `herdr-app do <mod>.hold|release`.
+// Usage: optkeys [herdr cli] [mod]   (mod defaults to agent-key-modifier)
 // ponytail: polls at 30 Hz (no permission needed, ~0.7% CPU); a CGEventTap would be instant but needs Input Monitoring.
 import AppKit
 
 let cli = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "/Applications/Herdr.app/Contents/MacOS/Herdr"
+let mod = CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "agent-key-modifier"
 var shown = false
 
 func send(_ command: String) {
   let p = Process()
   p.executableURL = URL(fileURLWithPath: cli)
-  p.arguments = ["do", "agent-key-modifier." + command]
+  p.arguments = ["do", mod + "." + command]
   p.standardOutput = FileHandle.nullDevice
   p.standardError = FileHandle.nullDevice
   try? p.run()
