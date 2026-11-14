@@ -1,7 +1,9 @@
 #!/bin/sh
+# Usage: sh install.sh [mod]   (agent-key-modifier, the default, or agents-grouped)
 # Builds the Option-hold helper and runs it at login (launchd agent dev.herdr.agent-key-modifier).
 # Remove: launchctl bootout gui/"$(id -u)"/dev.herdr.agent-key-modifier && rm ~/Library/LaunchAgents/dev.herdr.agent-key-modifier.plist
 set -e
+mod="${1:-agent-key-modifier}"
 cd "$(dirname "$0")"
 dest="$HOME/.config/herdr-app/agent-key-modifier-optkeys"
 swiftc -O optkeys.swift -o "$dest"
@@ -11,7 +13,7 @@ cat > "$plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>dev.herdr.agent-key-modifier</string>
-  <key>ProgramArguments</key><array><string>$dest</string></array>
+  <key>ProgramArguments</key><array><string>$dest</string><string>/Applications/Herdr.app/Contents/MacOS/Herdr</string><string>$mod</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Interactive</string>
