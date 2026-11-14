@@ -1,6 +1,7 @@
 {
   "global": {
     "alt-0": "agents-grouped.show",
+    "ctrl-a e": "agents-grouped.edit",
     "alt-1": "agents-grouped.n1",
     "alt-2": "agents-grouped.n2",
     "alt-3": "agents-grouped.n3",

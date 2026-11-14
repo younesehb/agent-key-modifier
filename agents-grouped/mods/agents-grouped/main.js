@@ -2,7 +2,10 @@
 // agents-grouped: clone of the shipped `agents` mod (Herdr 0.1.15) adding a name, group, icon
 // and group color per agent, stored as hc labels on its terminal: alias, group, icon, group_color.
 // Right-click an agent to edit them; drag an agent onto a group to move it; "By group" in the
-// sort menu clusters agents by group. Also agent-key-modifier's alt+1..9 / alt+0 keys.
+// sort menu clusters agents by group, in an order you drag the headers into; right-click a header
+// to rename, recolor or ungroup it. Folder rules put new agents in a group by themselves.
+// ctrl-a e (keys.json "agents-grouped.edit") edits the focused agent. Also agent-key-modifier's
+// alt+1..9 / alt+0 keys.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -33,6 +36,55 @@ function writeTags(address, values) {
   const slash = address.indexOf("/");
   if (slash < 0) return hc(["label", address, ...args]);
   return exec("hc", ["label", address.slice(slash + 1), ...args], { on: address.slice(0, slash) });
+}
+
+const HEX = /^#[0-9a-fA-F]{3,8}$/;
+const groupName = (x) => (x?.labels?.group ?? "").trim();
+// The machine an address lives on (`studio/t5` -> studio), null for this computer.
+const machineOf = (address) => (address.includes("/") ? address.split("/")[0] : null);
+
+// Every group in use with its color: a member's group_color, else one picked from the name.
+function groupsIn(all, t) {
+  const set = new Map();
+  for (const x of all) {
+    const g = groupName(x);
+    if (!g || x.state !== "live") continue;
+    const c = x.labels?.group_color ?? "";
+    if (!set.get(g) && HEX.test(c)) set.set(g, c);
+    else if (!set.has(g)) set.set(g, null);
+  }
+  return new Map([...set].map(([g, c]) => [g, c ?? hue(g, t)]));
+}
+
+// "By group" order: the order the headers were dragged into, then by name; no group last.
+const groupOrder = () => { const o = shared("agents.groupOrder"); return Array.isArray(o) ? o : []; };
+function byGroup(x, y) {
+  if (!x || !y) return (x ? 0 : 1) - (y ? 0 : 1);
+  const o = groupOrder();
+  const i = o.indexOf(x), j = o.indexOf(y);
+  return (i < 0 ? Infinity : i) - (j < 0 ? Infinity : j) || x.localeCompare(y);
+}
+
+// Folder rules: an agent in `folder` (or below it) on `machine` joins `group` by itself.
+const rules = () => { const r = shared("agents.rules"); return Array.isArray(r) ? r : []; };
+function ruleFor(machine, cwd) {
+  if (!cwd) return null;
+  return rules().filter((r) => (r.machine ?? null) === machine && (cwd === r.folder || cwd.startsWith(r.folder.replace(/\/$/, "") + "/")))
+    .sort((a, b) => b.folder.length - a.folder.length)[0] ?? null;
+}
+
+// The same labels on several terminals; resolves with what went wrong, if anything.
+async function writeMany(addresses, values) {
+  const errors = [];
+  await Promise.all(addresses.map(async (a) => {
+    try {
+      const r = await writeTags(a, values);
+      if (r.code) errors.push(`${a}: ${r.stderr || r.stdout}`);
+    } catch (e) {
+      errors.push(`${a}: ${e}`);
+    }
+  }));
+  return errors;
 }
 
 function find(node, id) {
@@ -114,7 +166,10 @@ export default class Agents extends View {
   init(_props, cx) {
     if (props()?.sortMenu) return;
     if (props()?.edit) return this.initEdit(cx);
+    if (props()?.groupEdit) return this.initGroupEdit(cx);
     this.folded = new Set();
+    this.rows = new Map();
+    this.autoTried = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
     try { this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}"); } catch { this.changed = {}; }
     if (!this.changed || typeof this.changed !== "object" || Array.isArray(this.changed)) this.changed = {};
@@ -128,7 +183,8 @@ export default class Agents extends View {
     cx.spawn(async (cx) => {
       for (;;) {
         const c = await nextCommand();
-        if (c.endsWith("hold") || c.endsWith("release")) {
+        if (c.endsWith("edit")) this.editFocused();
+        else if (c.endsWith("hold") || c.endsWith("release")) {
           // extras/macos-option-hold helper: numbers while Option is held.
           this.unflash?.cancel();
           this.flash = c.endsWith("hold");
@@ -227,6 +283,7 @@ export default class Agents extends View {
       s.on("change", (_e, cx) => cx.notify());
       return { ...f, state: s };
     });
+    this.ruleOn = Boolean(p.cwd) && ruleFor(machineOf(p.edit), p.cwd)?.folder === p.cwd;
     this.fields[0].state.focus();
     cx.timer.after(600, () => this.fields[0].state.focus());
     this.handle = cx.focus_handle();
@@ -237,6 +294,16 @@ export default class Agents extends View {
     this.saving = true;
     const p = props();
     const values = Object.fromEntries(this.fields.map((f) => [f.key, f.state.value()]));
+    // The folder rule: on with a group adds (or moves) it, off or without a group removes it.
+    if (p.cwd) {
+      const machine = machineOf(p.edit);
+      const group = values.group.trim();
+      const others = rules().filter((r) => !((r.machine ?? null) === machine && r.folder === p.cwd));
+      const next = this.ruleOn && group ? [...others, { machine, folder: p.cwd, group }] : others;
+      if (JSON.stringify(next) !== JSON.stringify(rules())) setShared("agents.rules", next);
+    }
+    // group_auto: someone chose this agent's group, so a folder rule leaves it alone from now on.
+    values.group_auto = "done";
     // Wait for hc before closing: closing the copy cancels its pending calls.
     cx.spawn(async () => {
       try {
@@ -249,27 +316,141 @@ export default class Agents extends View {
     });
   }
 
-  editor(t) {
-    const p = props();
-    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+  button(t, id, text, primary, action) {
+    return h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click(action).child(text);
-    return v_flex().id("tag-editor").track_focus(this.handle)
+  }
+
+  // A dialog: title, a scrolling body, then the buttons; Esc closes it.
+  dialog(t, id, title, body, buttons) {
+    const p = props();
+    return v_flex().id(id).track_focus(this.handle)
       .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
-      .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
-      .child(h_flex().items_center().child(div().flex_1().truncate().text_size(15).font_semibold().child(`Edit agent · ${p.name ?? p.edit}`))
+      .size_full().p(18).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().flex_none().items_center().child(div().flex_1().truncate().text_size(15).font_semibold().child(title))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
-      .children(this.fields.flatMap((f) => [
-        div().pt(14).pb(6).text_size(11.5).text_color(t.dim).child(f.label),
-        Input.new(f.state).h(34).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12.8).text_color(t.foreground),
-        ...(f.key === "icon" ? [this.picker(t, f, EMOJIS, (e, on) => div().text_size(15).child(e), 128)] : []),
-        ...(f.key === "group_color" ? [this.picker(t, f, SWATCHES, (c, on) => div().size(16).rounded(8).bg(c))] : []),
-      ]))
-      .child(div().pt(8).text_size(11.5).text_color(t.dim).child("Leave a field empty to remove it."))
-      .child(h_flex().pt(18).gap(8).justify_end()
-        .child(button("tag-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
-        .child(button("tag-save", "Save", true, (_e, cx) => this.save(cx))));
+      .child(v_flex().id(`${id}-body`).flex_1().min_h(0).overflow_y_scrollbar().children(body))
+      .child(h_flex().flex_none().pt(16).gap(8).items_center().children(buttons));
+  }
+
+  fieldLabel(t, text) {
+    return div().pt(14).pb(6).text_size(11.5).text_color(t.dim).child(text);
+  }
+
+  input(t, state) {
+    return Input.new(state).h(34).px(10).rounded(9).border_1().border_color(t.input).bg(t.background).text_size(12.8).text_color(t.foreground);
+  }
+
+  editor(t) {
+    const p = props();
+    const body = this.fields.flatMap((f) => [
+      this.fieldLabel(t, f.label),
+      this.input(t, f.state),
+      ...(f.key === "group" ? [this.groupChips(t, f)] : []),
+      ...(f.key === "icon" ? [this.picker(t, f, EMOJIS, (e) => div().text_size(15).child(e), 96)] : []),
+      ...(f.key === "group_color" ? [this.picker(t, f, SWATCHES, (c) => div().size(16).rounded(8).bg(c))] : []),
+    ]);
+    if (p.cwd) body.push(h_flex().id("tag-rule").pt(14).gap(8).items_center().cursor_pointer()
+      .on_click((_e, cx) => { this.ruleOn = !this.ruleOn; cx.notify(); })
+      .child(div().size(16).flex_none().rounded(4).border_1().border_color(this.ruleOn ? t.accent : t.input)
+        .bg(this.ruleOn ? t.accent : t.background).flex().items_center().justify_center()
+        .when(this.ruleOn, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(12).text_color(t.accent_foreground))))
+      .child(div().flex_1().min_w(0).text_size(11.5).text_color(t.muted).child(`Also put the other agents in ${p.cwd.replace(/^\/(Users|home)\/[^/]+/, "~")} in this group`)));
+    body.push(div().pt(10).text_size(11.5).text_color(t.dim).child("Leave a field empty to remove it."));
+    return this.dialog(t, "tag-editor", `Edit agent · ${p.name ?? p.edit}`, body, [
+      div().flex_1(),
+      this.button(t, "tag-cancel", "Cancel", false, () => closeOverlay(p.overlay)),
+      this.button(t, "tag-save", "Save", true, (_e, cx) => this.save(cx)),
+    ]);
+  }
+
+  // The groups in use, as chips that fill the Group field (with the group's color dot).
+  groupChips(t, f) {
+    const now = f.state.value().trim();
+    const groups = [...groupsIn(terminals(), t)].sort(([x], [y]) => byGroup(x, y));
+    return h_flex().flex_wrap().gap(4).pt(8).children(groups.map(([g, c], i) => {
+      const on = now === g;
+      return h_flex().id(`pick-grp-${i}`).h(24).px(9).gap(6).items_center().rounded(12).cursor_pointer()
+        .border_1().border_color(on ? t.accent : t.input).when(on, (el) => el.bg(t.selected))
+        .hover((s) => s.bg(t.hover))
+        .on_click((_e, cx) => { f.state.set_value(on ? "" : g); cx.notify(); })
+        .child(div().size(8).flex_none().rounded(4).bg(c))
+        .child(div().text_size(11.5).child(g));
+    }));
+  }
+
+  // The group editor: this mod opened again as a dialog with props { groupEdit: name, color }.
+  initGroupEdit(cx) {
+    const p = props();
+    this.nameState = InputState.new({ value: p.groupEdit });
+    this.colorField = { key: "group_color", state: InputState.new({ value: p.color ?? "", placeholder: "picked from the name" }) };
+    for (const s of [this.nameState, this.colorField.state]) {
+      s.on("submit", (_e, cx) => this.saveGroup(cx));
+      s.on("change", (_e, cx) => cx.notify());
+    }
+    this.nameState.focus();
+    cx.timer.after(600, () => this.nameState.focus());
+    this.handle = cx.focus_handle();
+  }
+
+  // Renames and recolors every member (or ungroups them all); folder rules and the header order follow.
+  saveGroup(cx, ungroup = false) {
+    if (this.saving) return;
+    this.saving = true;
+    const p = props();
+    const old = p.groupEdit;
+    const name = ungroup ? "" : this.nameState.value().trim();
+    const color = ungroup ? "" : this.colorField.state.value().trim();
+    const members = terminals().filter((x) => x.state === "live" && groupName(x) === old).map((x) => x.address);
+    setShared("agents.rules", rules().flatMap((r) => (r.group !== old ? [r] : name ? [{ ...r, group: name }] : [])));
+    setShared("agents.groupOrder", [...new Set(groupOrder().flatMap((g) => (g !== old ? [g] : name ? [name] : [])))]);
+    cx.spawn(async () => {
+      const errors = await writeMany(members, { group: name, group_color: color, group_auto: "done" });
+      if (errors.length) notify({ title: "Couldn't update the group", body: errors.join("\n"), level: "error" });
+      closeOverlay(p.overlay);
+    });
+  }
+
+  groupEditor(t) {
+    const p = props();
+    const folders = rules().filter((r) => r.group === p.groupEdit);
+    const body = [
+      this.fieldLabel(t, "Name"),
+      this.input(t, this.nameState),
+      this.fieldLabel(t, "Color (#hex, optional: else picked from the name)"),
+      this.input(t, this.colorField.state),
+      this.picker(t, this.colorField, SWATCHES, (c) => div().size(16).rounded(8).bg(c)),
+    ];
+    if (folders.length) {
+      body.push(this.fieldLabel(t, "Agents in these folders join by themselves"));
+      for (const [i, r] of folders.entries()) body.push(h_flex().h(28).gap(8).items_center()
+        .child(div().flex_1().min_w(0).truncate().text_size(12).child(`${r.machine ? `${r.machine}: ` : ""}${r.folder.replace(/^\/(Users|home)\/[^/]+/, "~")}`))
+        .child(div().id(`rule-rm-${i}`).px(6).rounded(5).text_size(11.5).text_color(t.dim).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click(() => setShared("agents.rules", rules().filter((x) => x !== r && !(x.folder === r.folder && (x.machine ?? null) === (r.machine ?? null)))))
+          .child("Remove")));
+    }
+    return this.dialog(t, "group-editor", `Edit group · ${p.groupEdit}`, body, [
+      this.button(t, "group-ungroup", "Ungroup all", false, (_e, cx) => this.saveGroup(cx, true)),
+      div().flex_1(),
+      this.button(t, "group-cancel", "Cancel", false, () => closeOverlay(p.overlay)),
+      this.button(t, "group-save", "Save", true, (_e, cx) => this.saveGroup(cx)),
+    ]);
+  }
+
+  editGroup(name) {
+    const color = terminals().find((x) => groupName(x) === name && HEX.test(x.labels?.group_color ?? ""))?.labels.group_color ?? "";
+    const n = rules().filter((r) => r.group === name).length;
+    openOverlay({ mod: SELF, kind: "dialog", width: 400, height: Math.min(640, 330 + (n ? 40 + 28 * n : 0)), props: { groupEdit: name, color } });
+  }
+
+  // ctrl-a e: the focused terminal's agent, as its row shows it.
+  editFocused() {
+    const r = this.rows.get(focused()?.terminal ?? "");
+    if (r) this.editTags(r.a, r.tag, r.name, r.auto);
+    else notify({ title: "No agent to edit", body: "Focus an agent's terminal first.", level: "info" });
   }
 
   // A row of chips that fill field `f`; clicking the chosen one again clears it.
@@ -296,12 +477,24 @@ export default class Agents extends View {
     if (!a || now === group) return;
     cx.spawn(async () => {
       try {
-        const r = await writeTags(from, { group });
+        const r = await writeTags(from, { group, group_auto: "done" });
         if (r.code) notify({ title: "Couldn't move the agent", body: r.stderr || r.stdout, level: "error" });
       } catch (e) {
         notify({ title: "Couldn't move the agent", body: String(e), level: "error" });
       }
     });
+  }
+
+  // A header dragged in "By group": goes where the target header is; the order is remembered.
+  dropGroup(cx, shown) {
+    const from = this.dragG;
+    const to = this.overG;
+    this.dragG = this.overG = null;
+    cx.notify();
+    if (!to || to === from) return;
+    const names = shown.filter((g) => g !== from);
+    names.splice(names.indexOf(to) + (shown.indexOf(from) < shown.indexOf(to) ? 1 : 0), 0, from);
+    setShared("agents.groupOrder", [...names, ...groupOrder().filter((g) => !names.includes(g))]);
   }
 
   // The drop target under the pointer: a row or header id and the group it stands for (null: none).
@@ -310,7 +503,8 @@ export default class Agents extends View {
   }
 
   editTags(a, tag, name, auto) {
-    openOverlay({ mod: SELF, kind: "dialog", width: 400, height: 630, props: { edit: a.address, name, auto, alias: tag.alias ?? "", group: tag.group ?? "", icon: tag.icon ?? "", group_color: tag.group_color ?? "" } });
+    const cwd = terminals().find((x) => x.address === a.address)?.cwd ?? null;
+    openOverlay({ mod: SELF, kind: "dialog", width: 400, height: cwd ? 690 : 650, props: { edit: a.address, cwd, name, auto, alias: tag.alias ?? "", group: tag.group ?? "", icon: tag.icon ?? "", group_color: tag.group_color ?? "" } });
   }
 
   peek(addr) {
@@ -370,7 +564,9 @@ export default class Agents extends View {
     const t = theme();
     if (props()?.sortMenu) return this.sortMenu(t);
     if (props()?.edit) return this.editor(t);
+    if (props()?.groupEdit) return this.groupEditor(t);
     const collapsed = narrow();
+    this.rows.clear();
     const sort = sortOf();
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
@@ -390,19 +586,26 @@ export default class Agents extends View {
     const tagMap = new Map(all.map((x) => [x.address, x.labels ?? {}]));
     const tagOf = (a) => tagMap.get(a.address) ?? {};
     const groupOf = (a) => (tagOf(a).group ?? "").trim();
-    // A group's color: the first member's group_color, else one picked from the name.
-    const colors = new Map();
-    for (const a of list) {
-      const g = groupOf(a);
-      if (g && !colors.has(g) && /^#[0-9a-fA-F]{3,8}$/.test(tagOf(a).group_color ?? "")) colors.set(g, tagOf(a).group_color);
+    const known = groupsIn(all, t);
+    const colorOf = (g) => known.get(g) ?? hue(g, t);
+    // Folder rules: an ungrouped agent in a rule's folder joins its group, once; an agent whose
+    // group someone chose (group_auto) is left alone, so ungrouping it sticks.
+    if (rules().length) {
+      const cwds = new Map(all.map((x) => [x.address, x.cwd]));
+      for (const a of list) {
+        if (groupOf(a) || tagOf(a).group_auto || this.autoTried.has(a.address)) continue;
+        const r = ruleFor(machineOf(a.address), cwds.get(a.address));
+        if (!r) continue;
+        this.autoTried.add(a.address);
+        cx.spawn(async () => { await writeMany([a.address], { group: r.group, group_auto: "rule" }); });
+      }
     }
-    const colorOf = (g) => colors.get(g) ?? hue(g, t);
     const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
     const rankOf = (a) => urgency.get(a.address);
     const byUrgency = (x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq;
     if (byPriority) list = [...list].sort(byUrgency);
-    // By group: groups by name, ungrouped last, most urgent first inside each.
-    if (custom) list = [...list].sort((x, y) => (groupOf(x) || "￿").localeCompare(groupOf(y) || "￿") || byUrgency(x, y));
+    // By group: groups in their dragged order, then by name, ungrouped last; most urgent first inside each.
+    if (custom) list = [...list].sort((x, y) => byGroup(groupOf(x), groupOf(y)) || byUrgency(x, y));
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
@@ -471,6 +674,8 @@ export default class Agents extends View {
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       if (collapsed) {
+        const plain = a.space_name || label(a);
+        this.rows.set(a.address, { a, tag, name: (tag.alias ?? "").trim() || plain, auto: plain });
         return h_flex()
           .id(`ag-${a.address}`)
           .h(26)
@@ -509,6 +714,7 @@ export default class Agents extends View {
       const auto = full ? a.space_name || label(a) : more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
       // A name given in the right-click dialog (label `alias`) wins over the automatic one.
       const name = (tag.alias ?? "").trim() || auto;
+      this.rows.set(a.address, { a, tag, name, auto });
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -572,6 +778,8 @@ export default class Agents extends View {
     const header = (g) => {
       const open = !this.folded.has(g.id);
       const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
+      const isGroup = custom && g.id.startsWith("grp-");
+      const name = isGroup ? g.id.slice(4) : "";
       return h_flex()
         .id(g.id)
         .px(8)
@@ -588,10 +796,18 @@ export default class Agents extends View {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
-        .when(!custom, (el) => el.on_mouse_move((_e, cx) => this.dragOver(null, null, cx)))
-        .when(custom, (el) => el
-          .on_mouse_move((_e, cx) => this.dragOver(g.id, g.id.slice(4), cx))
-          .when(this.over === g.id, (el) => el.text_color(t.foreground).bg(t.hover).rounded(6)))
+        .on_mouse_move((_e, cx) => {
+          if (this.dragG) {
+            if (this.overG !== (name || null)) { this.overG = name || null; cx.notify(); }
+          } else if (isGroup) this.dragOver(g.id, name, cx);
+          else this.dragOver(null, null, cx);
+        })
+        .when(isGroup, (el) => el.when(this.over === g.id, (el) => el.text_color(t.foreground).bg(t.hover).rounded(6)))
+        .when(Boolean(name), (el) => el
+          .on_mouse_down("left", () => { this.dragG = name; this.overG = null; })
+          .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.editGroup(name); })
+          .when(Boolean(this.overG) && this.dragG === name, (el) => el.opacity(0.5))
+          .when(Boolean(this.dragG) && this.overG === name && this.dragG !== name, (el) => el.border_t(2).border_color(t.accent)))
         .when(Boolean(g.color), (el) => el.child(div().size(8).flex_none().rounded(4).bg(g.color)))
         .child(div().truncate().text_color(g.color ?? t[g.status] ?? t.dim).child(g.label))
         .when(byPriority || custom || !open, (el) => el.child(div().text_color(t.dim).child(String(g.members.length))))
@@ -604,11 +820,12 @@ export default class Agents extends View {
       ? list.flatMap(withKids)
       : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
 
-    const endDrag = (cx) => { if (this.drag) { this.drag = this.over = null; cx.notify(); } };
+    const endDrag = (cx) => { if (this.drag || this.dragG) { this.drag = this.over = this.dragG = this.overG = null; cx.notify(); } };
+    const shownGroups = groups.filter((g) => g.id.startsWith("grp-") && g.id !== "grp-").map((g) => g.id.slice(4));
     return v_flex()
       .id("agents-list")
       // Move events don't say which button is down: a release anywhere, or leaving the list, ends a drag.
-      .on_mouse_up("left", (_e, cx) => (this.drag && this.over ? this.dropInto(this.overGroup, cx) : endDrag(cx)))
+      .on_mouse_up("left", (_e, cx) => (this.dragG ? this.dropGroup(cx, shownGroups) : this.drag && this.over ? this.dropInto(this.overGroup, cx) : endDrag(cx)))
       .on_hover((on, cx) => { if (!on) endDrag(cx); })
       .size_full()
       .min_h(0)
