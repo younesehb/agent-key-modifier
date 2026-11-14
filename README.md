@@ -5,7 +5,7 @@ Two drop-in replacements for the Agents list in the [Herdr](https://github.com/h
 | Package | What it adds |
 |---|---|
 | [agent-key-modifier](agent-key-modifier) | `alt+1..9` jumps to agents, like herdr TUI's `focus_agent`, and rows show their number while you hold Option/Alt |
-| [agents-grouped](agents-grouped) | everything above, plus a name, group, icon and group color per agent (right-click), drag agents between groups, and a "By group" sort |
+| [agents-grouped](agents-grouped) | everything above, plus a name, group, icon and group color per agent (right-click or `ctrl-a e`), drag agents between groups, a "By group" sort you reorder by dragging headers, group-wide rename/recolor/ungroup, and folder rules that group new agents by themselves |
 
 ![agents-grouped](agents-grouped/preview.png)
 
@@ -26,6 +26,9 @@ Or by hand, from the package's folder: copy `layouts/` and `mods/` into `~/.conf
 | hold Option / Alt | show the row numbers until released (needs a helper below) |
 | right-click an agent (agents-grouped) | name, group, icon and group color |
 | drag an agent onto a group (agents-grouped) | move it there; onto "No group" to remove it |
+| `ctrl-a e` (agents-grouped) | edit the focused agent |
+| right-click a group header (agents-grouped) | rename, recolor or ungroup the whole group; see its folder rules |
+| drag a group header (agents-grouped) | reorder the "By group" view |
 
 ### Optional: numbers while Option/Alt is held
 
@@ -38,7 +41,7 @@ Switching packages later: run the install again with the other name. Removal ste
 
 ## Notes
 
-Groups, names and icons are `hc` labels on each agent's terminal (`alias`, `group`, `icon`, `group_color`), so they survive restarts and work for agents on other machines.
+Groups, names and icons are `hc` labels on each agent's terminal (`alias`, `group`, `icon`, `group_color`, `group_auto`), so they survive restarts and work for agents on other machines. The group order and folder rules are kept in Herdr's shared state.
 
 The layouts and mods are clones of Herdr 0.1.15's `main` layout and `agents` mod, so they don't get Herdr's updates. Once [#891](https://github.com/herdrdev/herdr-app/issues/891) (`agent.select {index}`) and [#890](https://github.com/herdrdev/herdr-app/issues/890) land, the keys shrink to a few lines. Each package's `RECIPE.md` says how it's built.
 
